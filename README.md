@@ -8,9 +8,10 @@ Register LLM agents, chain them into flows, run them, and track token usage. Ava
 | Providers | OpenAI, Anthropic, Gemini and more, via LiteLLM | OpenAI, Anthropic, Gemini (direct from the browser) |
 | Tools (calculator, web search) | Yes | No |
 | Cost in USD | Yes (LiteLLM prices) | No, tokens only |
+| Per-agent persistent memory + shared flow context | Yes | No |
 | Live model list / type your own | Yes | Yes |
 | Live run view, history, token report | Yes | Yes |
-| Data storage | SQLite volume on the server | Browser `localStorage` (JSON export/import) |
+| Data storage | SQLite volume on the server | Browser `localStorage` |
 | API keys | Server `.env` | Entered in the browser |
 
 ## Repository structure
@@ -60,6 +61,13 @@ UI: http://localhost:8501 · API docs: http://localhost:8000/docs
 cd lite
 python -m http.server 8080  # then open http://localhost:8080
 ```
+
+## Publish Lite on GitHub Pages
+1. Push this repo to GitHub (branch `main`).
+2. Go to **Settings → Pages → Source** and choose **GitHub Actions**.
+3. The workflow in `.github/workflows/pages.yml` publishes the `lite/` folder at `https://<user>.github.io/<repo>/`. It runs on every push that touches `lite/`, or manually from the **Actions** tab.
+
+Only `lite/` is published. The `full/` version needs a server and is never exposed by Pages.
 
 ## Security notes
 - **Never commit `.env` or API keys.** `.gitignore` already excludes `.env`.

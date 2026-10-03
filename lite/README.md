@@ -8,5 +8,5 @@ A single `index.html`: agents, flows, runs, history and token report, all in the
 
 ## Limitations
 - No tools (calculator, web search) and no USD cost, only tokens.
-- Data is tied to one browser: use **Chaves → Exportar JSON** for backups (keys are not included).
+- Data is tied to one browser (`localStorage`); there is no backup/export.
 - Keys live in the browser. Use your own keys, with a spending limit, on trusted devices only.
