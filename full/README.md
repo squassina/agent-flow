@@ -24,14 +24,14 @@ cd frontend && streamlit run app.py              # terminal 2
 - `backend/runner.py` runs each flow in a background task with its own DB session and records every step.
 - This app has no authentication. Do not expose it publicly without a login or reverse-proxy auth.
 
-## Contexto e memória dos agentes
-- **Modo de contexto do fluxo**
-  - `chain` (padrão): cada agente recebe só a saída do anterior. É o mais barato.
-  - `shared`: cada agente recebe o pedido original, um resumo curto (≈400 caracteres) dos passos mais antigos e a saída completa do passo anterior. Mantém o contexto sem reenviar tudo.
-- **Memória persistente por agente** (opcional): após cada passo, o agente funde a interação em um resumo limitado (`memory_max_chars`, padrão 1500). Esse resumo é injetado no system prompt nas próximas execuções, em qualquer fluxo, e fica salvo na tabela `agent_memory`. Pode ser editado ou limpo na aba Agentes.
-- **Memória barata** (opcional, por agente):
-  - `memory_model`: modelo usado só para consolidar a memória. **Vazio = automático**: escolhe o modelo de chat mais barato entre os disponíveis nas suas chaves (lista ao vivo) que tenha preço na tabela do LiteLLM (custo ponderado 3:1 entrada/saída; ignora previews, áudio, imagem, embeddings e modelos descontinuados). `same` = mesmo modelo do agente. Ou digite um modelo específico. Sem lista ao vivo (sem chaves), usa o modelo do agente. A escolha atual aparece na aba Agentes e em `GET /models/cheapest`.
-  - `memory_every` (N): as interações ficam num buffer e a memória é consolidada em uma única chamada a cada N interações (em vez de uma por passo). Se a chamada falhar, o buffer é mantido para a próxima tentativa.
-  - `memory_min_chars`: saídas menores que esse tamanho (padrão 200) são ignoradas, pois raramente têm informação duradoura.
-- O custo da atualização da memória é registrado como `kind=memory` (com o modelo usado) e aparece separado no Relatório.
-- Bancos antigos são migrados automaticamente (colunas novas via `ALTER TABLE`).
+## Agent context and memory
+- **Flow context mode**
+  - `chain` (default): each agent receives only the output of the previous one. This is the cheapest mode.
+  - `shared`: each agent receives the original request, a short summary (≈400 characters) of earlier steps, and the complete output of the previous step. Maintains context without resending everything.
+- **Persistent memory per agent** (optional): after each step, the agent merges the interaction into a limited summary (`memory_max_chars`, default 1500). This summary is injected into the system prompt in subsequent runs across any flow, and is saved in the `agent_memory` table. It can be edited or cleared in the Agents tab.
+- **Low-cost memory** (optional, per agent):
+  - `memory_model`: model used exclusively for consolidating memory. **Empty = automatic**: selects the cheapest chat model among those available in your keys (live list) that has pricing in LiteLLM's table (weighted 3:1 input/output cost; ignores previews, audio, image, embeddings, and deprecated models). `same` = same model as the agent. Or type a specific model. Without a live list (no keys provided), it defaults to the agent's model. The current choice is shown in the Agents tab and via `GET /models/cheapest`.
+  - `memory_every` (N): interactions are buffered, and memory is consolidated in a single call every N interactions (instead of once per step). If the call fails, the buffer is kept for the next attempt.
+  - `memory_min_chars`: outputs shorter than this size (default 200) are ignored, as they rarely contain lasting information.
+- Memory update costs are recorded with `kind=memory` (using the model selected) and appear separately in the Report.
+- Legacy databases are migrated automatically (new columns added via `ALTER TABLE`).
