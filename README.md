@@ -61,13 +61,6 @@ cd lite
 python -m http.server 8080  # then open http://localhost:8080
 ```
 
-## Publish Lite on GitHub Pages
-1. Push this repo to GitHub (branch `main`).
-2. Go to **Settings → Pages → Source** and choose **GitHub Actions**.
-3. The workflow in `.github/workflows/pages.yml` publishes the `lite/` folder at `https://<user>.github.io/<repo>/`. It runs on every push that touches `lite/`, or manually from the **Actions** tab.
-
-Only `lite/` is published. The `full/` version needs a server and is never exposed by Pages.
-
 ## Security notes
 - **Never commit `.env` or API keys.** `.gitignore` already excludes `.env`.
 - **Lite** keeps keys in the visitor's browser and calls providers directly. Use your own keys with a spending limit, and only on devices you trust. The published page contains no keys.
