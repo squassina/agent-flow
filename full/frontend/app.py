@@ -34,6 +34,7 @@ if st.session_state.pop("refresh_models", False):
 else:
     mdata = api("GET", "/models/") or {}
 MODELS = mdata.get("models", [])
+memories = api("GET", "/memories/") or {}
 agent_name = {a["id"]: a["name"] for a in agents}
 
 tab_ag, tab_fl, tab_ex, tab_hi, tab_rp = st.tabs(["Agentes", "Fluxos", "Executar", "Histórico", "Relatório"])
@@ -45,6 +46,8 @@ with tab_ag:
         st.session_state["refresh_models"] = True
         st.rerun()
     c2.caption(f"{len(MODELS)} modelos · " + ("lista ao vivo" if mdata.get("live") else "lista padrão (sem chaves/erro)"))
+    cheap = api("GET", "/models/cheapest?n=1") or []
+    st.caption("💸 Memória automática usará: " + (f"**{cheap[0]['model']}** (${cheap[0]['input_per_1m']}/${cheap[0]['output_per_1m']} por 1M tokens entrada/saída)" if cheap else "o modelo do próprio agente (sem lista ao vivo de modelos)"))
     for prov, err in (mdata.get("errors") or {}).items():
         st.caption(f"⚠️ {prov}: {err}")
     with st.form("agent_form", clear_on_submit=True):
@@ -56,8 +59,15 @@ with tab_ag:
         model = model_custom.strip() or model_sel
         tools = st.multiselect("Ferramentas", tool_names)
         prompt = st.text_area("System prompt")
+        use_mem = st.checkbox("Memória persistente (resumo compacto reaproveitado entre execuções)")
+        mem_max = st.number_input("Tamanho máx. da memória (caracteres)", 200, 8000, 1500, step=100)
+        mem_model = st.text_input("Modelo da memória", placeholder="vazio = mais barato disponível (auto) · same = mesmo do agente · ou digite um modelo")
+        mem_every = st.number_input("Consolidar a memória a cada N interações", 1, 100, 1)
+        mem_min = st.number_input("Ignorar saídas menores que (caracteres)", 0, 5000, 200, step=50)
         if st.form_submit_button("Salvar") and name:
-            if api("POST", "/agents/", json={"name": name, "model": model, "prompt": prompt, "tools": ",".join(tools)}):
+            if api("POST", "/agents/", json={"name": name, "model": model, "prompt": prompt, "tools": ",".join(tools),
+                                              "use_memory": use_mem, "memory_max_chars": int(mem_max),
+                                              "memory_model": mem_model, "memory_every": int(mem_every), "memory_min_chars": int(mem_min)}):
                 st.rerun()
     st.subheader("Cadastrados")
     for a in agents:
@@ -67,9 +77,24 @@ with tab_ag:
             t = st.multiselect("Ferramentas", tool_names,
                                default=[x for x in (a["tools"] or "").split(",") if x in tool_names], key=f"at{a['id']}")
             p = st.text_area("Prompt", a["system_prompt"], key=f"ap{a['id']}")
+            um = st.checkbox("Memória persistente", bool(a.get("use_memory")), key=f"aum{a['id']}")
+            mm = st.number_input("Tamanho máx. da memória (caracteres)", 200, 8000, int(a.get("memory_max_chars") or 1500), step=100, key=f"amm{a['id']}")
+            mmod = st.text_input("Modelo da memória (vazio = auto mais barato · same = mesmo do agente)", a.get("memory_model") or "", key=f"amd{a['id']}")
+            mev = st.number_input("Consolidar a cada N interações", 1, 100, int(a.get("memory_every") or 1), key=f"amv{a['id']}")
+            mmn = st.number_input("Ignorar saídas menores que (caracteres)", 0, 5000, int(a.get("memory_min_chars") if a.get("memory_min_chars") is not None else 200), step=50, key=f"amn{a['id']}")
+            mem = memories.get(str(a["id"]))
+            if um or mem:
+                mtxt = st.text_area(f"Memória atual ({mem['updates'] if mem else 0} atualizações, {mem['pending'] if mem else 0} interações pendentes; editável)", mem["content"] if mem else "", key=f"amt{a['id']}")
+                mc1, mc2 = st.columns(2)
+                if mc1.button("Salvar memória", key=f"ams{a['id']}") and api("PUT", f"/agents/{a['id']}/memory", json={"content": mtxt}):
+                    st.rerun()
+                if mc2.button("Limpar memória", key=f"amc{a['id']}") and api("DELETE", f"/agents/{a['id']}/memory") is not None:
+                    st.rerun()
             c1, c2 = st.columns(2)
             if c1.button("Atualizar", key=f"au{a['id']}"):
-                if api("PUT", f"/agents/{a['id']}", json={"name": n, "model": m, "prompt": p, "tools": ",".join(t)}):
+                if api("PUT", f"/agents/{a['id']}", json={"name": n, "model": m, "prompt": p, "tools": ",".join(t),
+                                                          "use_memory": um, "memory_max_chars": int(mm),
+                                                          "memory_model": mmod, "memory_every": int(mev), "memory_min_chars": int(mmn)}):
                     st.rerun()
             if c2.button("Excluir", key=f"ad{a['id']}"):
                 if api("DELETE", f"/agents/{a['id']}") is not None:
@@ -84,14 +109,17 @@ with tab_fl:
             st.subheader("Novo fluxo")
             fname = st.text_input("Nome (ex: Analista → Tradutor)")
             sel = st.multiselect("Agentes na ordem de execução", list(agent_name), format_func=lambda i: f"{i} - {agent_name[i]}")
+            ctx = st.selectbox("Modo de contexto", ["chain", "shared"], format_func=lambda x: {
+                "chain": "chain: cada agente recebe só a saída do anterior (mais barato)",
+                "shared": "shared: pedido original + resumo dos passos antigos + saída anterior"}[x])
             if st.form_submit_button("Salvar") and fname and sel:
-                if api("POST", "/flows/", json={"name": fname, "agent_ids": ",".join(map(str, sel))}):
+                if api("POST", "/flows/", json={"name": fname, "agent_ids": ",".join(map(str, sel)), "context_mode": ctx}):
                     st.rerun()
     st.subheader("Cadastrados")
     for f in flows:
         chain = " → ".join(agent_name.get(int(i), "?") for i in f["agent_ids"].split(",") if i.strip())
         c1, c2 = st.columns([6, 1])
-        c1.write(f"**{f['id']} · {f['name']}**: {chain}")
+        c1.write(f"**{f['id']} · {f['name']}** [{f.get('context_mode') or 'chain'}]: {chain}")
         if c2.button("Excluir", key=f"fd{f['id']}"):
             api("DELETE", f"/flows/{f['id']}")
             st.rerun()
@@ -160,4 +188,7 @@ with tab_rp:
         for col, label in [("agent", "agente"), ("model", "modelo"), ("flow", "fluxo")]:
             st.subheader(f"Custo por {label}")
             st.bar_chart(df.groupby(col)["estimated_cost"].sum())
+        if "kind" in df:
+            st.subheader("Tokens por tipo (execução vs memória)")
+            st.bar_chart(df.groupby("kind")["tokens_used"].sum())
         st.dataframe(df, use_container_width=True)

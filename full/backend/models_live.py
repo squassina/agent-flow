@@ -1,5 +1,6 @@
 import os
 import time
+from datetime import date
 import requests
 
 FALLBACK = ["gpt-4o", "gpt-4o-mini", "claude-sonnet-4-5", "gemini/gemini-2.5-flash", "gemini/gemini-2.5-pro"]
@@ -62,3 +63,47 @@ def list_models(refresh: bool = False) -> dict:
     data = {"models": models or FALLBACK, "live": bool(models), "errors": errors}
     _CACHE.update(ts=time.time(), data=data)
     return data
+
+
+_SKIP_AUTO = _OPENAI_SKIP + ("preview", "-exp", "thinking", "deep-research", "computer-use", "robotics")
+
+
+def _price(model: str):
+    """(input, output) USD por token segundo a tabela de preços do LiteLLM, ou None se desconhecido/inadequado."""
+    from litellm import model_cost
+    info = model_cost.get(model)
+    if not info or info.get("mode") != "chat":
+        return None
+    i, o = info.get("input_cost_per_token"), info.get("output_cost_per_token")
+    if not i or not o:
+        return None
+    dep = info.get("deprecation_date")
+    if dep and str(dep) < date.today().isoformat():
+        return None
+    return i, o
+
+
+def cheapest_models(n: int = 5, refresh: bool = False) -> list:
+    """Modelos de chat mais baratos entre os DISPONÍVEIS (lista ao vivo das suas chaves) que têm preço no LiteLLM.
+    Custo ponderado 3:1 entrada/saída, pois consolidar memória é uma tarefa dominada por entrada."""
+    data = list_models(refresh)
+    if not data.get("live"):
+        return []  # sem lista ao vivo não sabemos o que está disponível
+    ranked = []
+    for m in data["models"]:
+        if any(x in m for x in _SKIP_AUTO):
+            continue
+        p = _price(m)
+        if p:
+            ranked.append((3 * p[0] + p[1], m, p))
+    ranked.sort()
+    return [{"model": m, "input_per_1m": round(p[0] * 1e6, 4), "output_per_1m": round(p[1] * 1e6, 4)}
+            for _, m, p in ranked[:n]]
+
+
+def cheapest_model():
+    try:
+        r = cheapest_models(1)
+        return r[0]["model"] if r else None
+    except Exception:
+        return None
