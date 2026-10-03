@@ -38,7 +38,7 @@ const save=()=>{try{localStorage.setItem('af',JSON.stringify(S))}catch(e){alert(
 const id=()=>S.nid++;
 const PROV={openai:'OpenAI',anthropic:'Anthropic',gemini:'Gemini'};
 const DEFAULTS={openai:['gpt-4o','gpt-4o-mini'],anthropic:['claude-sonnet-4-5'],gemini:['gemini-2.5-flash','gemini-2.5-pro']};
-const models={...DEFAULTS};let editing=null,draftSteps=[],viewRun=null,mstat='';
+const models={...DEFAULTS};let editing=null,draftSteps=[],runView=null,histView=null,mstat='';
 
 // ---------- LLM ----------
 async function callLLM(a,input){
@@ -119,28 +119,28 @@ function rRun(){
   $('#t-run').innerHTML=!S.flows.length?'<div class="mut">Nenhum fluxo cadastrado.</div>':`<h2>Executar fluxo</h2>
   <select id="rf">${S.flows.map(f=>`<option value="${f.id}">${f.id} - ${esc(f.name)}</option>`).join('')}</select>
   <label>Entrada inicial</label><textarea id="ri"></textarea><button class="b" id="rb" onclick="startRun()">Iniciar execução</button><div id="rv"></div>`;
-  if(viewRun)drawRun(viewRun)}
-function drawRun(rid){const r=S.runs.find(x=>x.id===rid),el=$('#rv')||$('#hv');if(!r||!el)return;const nm=i=>S.agents.find(a=>a.id===i)?.name||'?';
+  if(runView)drawRun(runView,'#rv')}
+function drawRun(rid,sel){const r=S.runs.find(x=>x.id===rid),el=$(sel);if(!r||!el)return;const nm=i=>S.agents.find(a=>a.id===i)?.name||'?';
   el.innerHTML=`<h2>Run #${r.id} ${{running:'⏳',done:'✅',error:'❌'}[r.status]} ${r.status}</h2>`+r.steps.map(s=>`<div class="card"><b>Passo ${s.n} · ${esc(nm(s.agent))}</b> <span class="mut">${s.tokens?s.tokens+' tokens':''}</span>
   <div class="mut">Entrada</div><pre>${esc(s.input)}</pre>${s.error?`<pre class="err">${esc(s.error)}</pre>`:s.output!=null?`<div class="mut">Saída</div><pre>${esc(s.output)}</pre>`:'<div class="mut">Executando...</div>'}</div>`).join('')+
   (r.status!=='running'?`<div class="card ${r.status==='error'?'err':'ok'}"><pre>${esc(r.final)}</pre></div>`:'')}
 async function startRun(){
   const f=S.flows.find(x=>x.id===+$('#rf').value),input=$('#ri').value.trim();if(!f||!input)return;
-  const run={id:id(),flow:f.id,input,status:'running',final:'',steps:[],at:new Date().toISOString()};S.runs.unshift(run);viewRun=run.id;save();$('#rb').disabled=true;drawRun(run.id);
+  const run={id:id(),flow:f.id,input,status:'running',final:'',steps:[],at:new Date().toISOString()};S.runs.unshift(run);runView=run.id;save();$('#rb').disabled=true;drawRun(run.id,'#rv');
   let cur=input;
   try{for(const [i,aid] of f.steps.entries()){
-    const a=S.agents.find(x=>x.id===aid);const st={n:i+1,agent:aid,input:cur,output:null,error:null,tokens:0};run.steps.push(st);drawRun(run.id);
+    const a=S.agents.find(x=>x.id===aid);const st={n:i+1,agent:aid,input:cur,output:null,error:null,tokens:0};run.steps.push(st);drawRun(run.id,'#rv');
     if(!a){st.error='Agente não encontrado';throw new Error(st.error)}
     try{const r=await callLLM(a,cur);st.output=cur=r.text;st.tokens=r.tokens;S.usage.push({run:run.id,flow:f.id,agent:a.id,model:a.model,provider:a.provider,tokens:r.tokens,at:new Date().toISOString()})}
     catch(e){st.error=e.message;throw e}
-    save();drawRun(run.id)}
+    save();drawRun(run.id,'#rv')}
     run.status='done';run.final=cur}
   catch(e){run.status='error';run.final='Falha: '+e.message}
-  save();drawRun(run.id);const b=$('#rb');if(b)b.disabled=false}
+  save();drawRun(run.id,'#rv');const b=$('#rb');if(b)b.disabled=false}
 
 // ---------- Histórico ----------
-function rHist(){$('#t-hist').innerHTML=(S.runs.length?S.runs.map(r=>`<div class="card row"><div class="grow">${{running:'⏳',done:'✅',error:'❌'}[r.status]} <b>#${r.id}</b> · ${esc(S.flows.find(f=>f.id===r.flow)?.name||'?')} <span class="mut">${r.at.slice(0,19).replace('T',' ')}</span></div><button class="s" onclick="viewRun=${r.id};rHist()">Ver</button></div>`).join(''):'<div class="mut">Nenhuma execução.</div>')+'<div id="hv"></div>';
-  if(viewRun)drawRun(viewRun)}
+function rHist(){$('#t-hist').innerHTML=(S.runs.length?S.runs.map(r=>`<div class="card row"><div class="grow">${{running:'⏳',done:'✅',error:'❌'}[r.status]} <b>#${r.id}</b> · ${esc(S.flows.find(f=>f.id===r.flow)?.name||'?')} <span class="mut">${r.at.slice(0,19).replace('T',' ')}</span></div><button class="s" onclick="histView=${r.id};rHist()">Ver</button></div>`).join(''):'<div class="mut">Nenhuma execução.</div>')+'<div id="hv"></div>';
+  if(histView)drawRun(histView,'#hv')}
 
 // ---------- Relatório ----------
 function rReport(){
