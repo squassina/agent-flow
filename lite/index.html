@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent Flow Lite</title>
+<style>
+:root{--bg:#fff;--fg:#1d1d1f;--mut:#6e6e73;--card:#f5f5f7;--bd:#d2d2d7;--ac:#3b6cf6;--err:#d93025;--ok:#188038}
+@media(prefers-color-scheme:dark){:root{--bg:#161618;--fg:#f2f2f4;--mut:#9a9aa0;--card:#232326;--bd:#3a3a3f;--ac:#6b93ff;--err:#ff6b60;--ok:#4cc26a}}
+*{box-sizing:border-box}body{margin:0;font:15px/1.5 system-ui,sans-serif;background:var(--bg);color:var(--fg)}
+main{max-width:960px;margin:0 auto;padding:16px}h1{font-size:22px;margin:8px 0 12px}h2{font-size:17px;margin:16px 0 8px}
+nav{display:flex;gap:4px;flex-wrap:wrap;border-bottom:1px solid var(--bd);margin-bottom:16px}
+nav button{background:none;border:0;padding:8px 12px;color:var(--mut);cursor:pointer;border-bottom:2px solid transparent;font:inherit}
+nav button.on{color:var(--fg);border-color:var(--ac)}
+input,select,textarea{width:100%;padding:8px;margin:4px 0 10px;border:1px solid var(--bd);border-radius:8px;background:var(--bg);color:var(--fg);font:inherit}
+textarea{min-height:90px;resize:vertical}label{font-size:13px;color:var(--mut)}
+button.b{background:var(--ac);color:#fff;border:0;border-radius:8px;padding:8px 14px;cursor:pointer;font:inherit}
+button.s{background:var(--card);color:var(--fg);border:1px solid var(--bd);border-radius:8px;padding:5px 10px;cursor:pointer;font:inherit}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:12px;margin:8px 0}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.row>*{flex:0 0 auto}.grow{flex:1 1 200px!important}
+pre{white-space:pre-wrap;word-break:break-word;margin:4px 0;font:inherit}.mut{color:var(--mut);font-size:13px}
+.err{color:var(--err)}.ok{color:var(--ok)}table{width:100%;border-collapse:collapse}td,th{padding:6px;border-bottom:1px solid var(--bd);text-align:left;font-size:14px}
+.bar{height:8px;background:var(--ac);border-radius:4px}.warn{background:var(--card);border-left:3px solid var(--err);padding:8px 12px;font-size:13px;margin-bottom:12px}
+</style>
+</head>
+<body><main>
+<h1>🤖 Agent Flow Lite</h1>
+<div class="warn">Roda 100% no navegador. Suas chaves de API e dados ficam só neste navegador (localStorage) e as chamadas vão direto aos provedores. Use apenas em computadores seus.</div>
+<nav id="nav"></nav>
+<section id="t-agents"></section><section id="t-flows"></section><section id="t-run"></section>
+<section id="t-hist"></section><section id="t-report"></section><section id="t-settings"></section>
+</main>
+<script>
+const $=s=>document.querySelector(s), esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let S;try{S=JSON.parse(localStorage.getItem('af'))}catch{}
+S=S||{agents:[],flows:[],runs:[],usage:[],keys:{openai:'',anthropic:'',gemini:''},nid:1};
+const save=()=>{try{localStorage.setItem('af',JSON.stringify(S))}catch(e){alert('Falha ao salvar: '+e)}};
+const id=()=>S.nid++;
+const PROV={openai:'OpenAI',anthropic:'Anthropic',gemini:'Gemini'};
+const DEFAULTS={openai:['gpt-4o','gpt-4o-mini'],anthropic:['claude-sonnet-4-5'],gemini:['gemini-2.5-flash','gemini-2.5-pro']};
+const models={...DEFAULTS};let editing=null,draftSteps=[],viewRun=null,mstat='';
+
+// ---------- LLM ----------
+async function callLLM(a,input){
+  const key=S.keys[a.provider];if(!key)throw new Error('Chave de '+PROV[a.provider]+' não configurada (aba Chaves).');
+  let r,j;
+  if(a.provider==='openai'){
+    r=await fetch('https://api.openai.com/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+key},
+      body:JSON.stringify({model:a.model,messages:[{role:'system',content:a.prompt||''},{role:'user',content:input}]})});
+    j=await r.json();if(!r.ok)throw new Error(j.error?.message||r.status);
+    return{text:j.choices[0].message.content||'',tokens:j.usage?.total_tokens||0};
+  }
+  if(a.provider==='anthropic'){
+    r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
+      body:JSON.stringify({model:a.model,max_tokens:4096,system:a.prompt||'',messages:[{role:'user',content:input}]})});
+    j=await r.json();if(!r.ok)throw new Error(j.error?.message||r.status);
+    return{text:j.content.filter(b=>b.type==='text').map(b=>b.text).join('\n'),tokens:(j.usage?.input_tokens||0)+(j.usage?.output_tokens||0)};
+  }
+  r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(a.model)}:generateContent`,{method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':key},
+    body:JSON.stringify({systemInstruction:{parts:[{text:a.prompt||''}]},contents:[{role:'user',parts:[{text:input}]}]})});
+  j=await r.json();if(!r.ok)throw new Error(j.error?.message||r.status);
+  return{text:(j.candidates?.[0]?.content?.parts||[]).map(p=>p.text||'').join(''),tokens:j.usageMetadata?.totalTokenCount||0};
+}
+async function fetchModels(p){
+  const key=S.keys[p];if(!key){mstat=`⚠️ ${PROV[p]}: sem chave`;return}
+  try{
+    let list=[];
+    if(p==='openai'){const j=await(await fetch('https://api.openai.com/v1/models',{headers:{Authorization:'Bearer '+key}})).json();if(j.error)throw new Error(j.error.message);
+      list=j.data.map(m=>m.id).filter(i=>/^(gpt-|o1|o3|o4|chatgpt)/.test(i)&&!/embedding|whisper|tts|dall-e|audio|realtime|transcribe|image|moderation|search|codex|instruct/.test(i))}
+    else if(p==='anthropic'){const j=await(await fetch('https://api.anthropic.com/v1/models?limit=1000',{headers:{'x-api-key':key,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'}})).json();if(j.error)throw new Error(j.error.message);list=j.data.map(m=>m.id)}
+    else{const j=await(await fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=200',{headers:{'x-goog-api-key':key}})).json();if(j.error)throw new Error(j.error.message);
+      list=j.models.filter(m=>(m.supportedGenerationMethods||[]).includes('generateContent')).map(m=>m.name.replace('models/',''))}
+    models[p]=list.sort();mstat=`✅ ${PROV[p]}: ${list.length} modelos`;
+  }catch(e){mstat=`⚠️ ${PROV[p]}: ${e.message}`}
+}
+
+// ---------- Tabs ----------
+const TABS={agents:['Agentes',rAgents],flows:['Fluxos',rFlows],run:['Executar',rRun],hist:['Histórico',rHist],report:['Relatório',rReport],settings:['Chaves',rSettings]};
+function show(t){for(const k in TABS){$('#t-'+k).style.display=k===t?'':'none'}
+  $('#nav').innerHTML=Object.entries(TABS).map(([k,[n]])=>`<button class="${k===t?'on':''}" onclick="show('${k}')">${n}</button>`).join('');TABS[t][1]()}
+
+// ---------- Agentes ----------
+function rAgents(){
+  const a=S.agents.find(x=>x.id===editing)||{provider:'openai',model:'',name:'',prompt:''};
+  $('#t-agents').innerHTML=`<h2>${editing?'Editar':'Novo'} agente</h2>
+  <label>Nome</label><input id="an" value="${esc(a.name)}">
+  <div class="row"><div class="grow"><label>Provedor</label><select id="ap" onchange="agentProv()">${Object.entries(PROV).map(([k,v])=>`<option value="${k}" ${a.provider===k?'selected':''}>${v}</option>`).join('')}</select></div>
+  <div class="grow"><label>Modelo (escolha ou digite)</label><input id="am" list="ml" value="${esc(a.model)}"><datalist id="ml">${models[a.provider].map(m=>`<option value="${esc(m)}">`).join('')}</datalist></div>
+  <button class="s" onclick="refreshModels()">🔄 Atualizar modelos</button></div>
+  <div class="mut" id="ms">${esc(mstat)}</div>
+  <label>System prompt</label><textarea id="apr">${esc(a.prompt)}</textarea>
+  <button class="b" onclick="saveAgent()">Salvar</button> ${editing?'<button class="s" onclick="editing=null;rAgents()">Cancelar</button>':''}
+  <h2>Cadastrados</h2>${S.agents.map(x=>`<div class="card row"><div class="grow"><b>${x.id} · ${esc(x.name)}</b><div class="mut">${PROV[x.provider]} / ${esc(x.model)}</div></div>
+  <button class="s" onclick="editing=${x.id};rAgents()">Editar</button><button class="s" onclick="delAgent(${x.id})">Excluir</button></div>`).join('')||'<div class="mut">Nenhum agente.</div>'}`;
+}
+function agentProv(){const p=$('#ap').value;$('#ml').innerHTML=models[p].map(m=>`<option value="${esc(m)}">`).join('')}
+async function refreshModels(){$('#ms').textContent='Buscando...';const p=$('#ap').value;await fetchModels(p);const keep={n:$('#an').value,m:$('#am').value,pr:$('#apr').value};rAgents();$('#ap').value=p;$('#an').value=keep.n;$('#am').value=keep.m;$('#apr').value=keep.pr;agentProv()}
+function saveAgent(){const o={name:$('#an').value.trim(),provider:$('#ap').value,model:$('#am').value.trim(),prompt:$('#apr').value};
+  if(!o.name||!o.model)return alert('Informe nome e modelo.');
+  if(editing)Object.assign(S.agents.find(x=>x.id===editing),o);else S.agents.push({id:id(),...o});
+  editing=null;save();rAgents()}
+function delAgent(i){if(S.flows.some(f=>f.steps.includes(i)))return alert('Agente usado em um fluxo.');S.agents=S.agents.filter(x=>x.id!==i);save();rAgents()}
+
+// ---------- Fluxos ----------
+function rFlows(){
+  const nm=i=>S.agents.find(a=>a.id===i)?.name||'?';
+  $('#t-flows').innerHTML=!S.agents.length?'<div class="mut">Cadastre agentes primeiro.</div>':`<h2>Novo fluxo</h2>
+  <label>Nome</label><input id="fn">
+  <div class="row"><select id="fa" class="grow">${S.agents.map(a=>`<option value="${a.id}">${a.id} - ${esc(a.name)}</option>`).join('')}</select><button class="s" onclick="draftSteps.push(+$('#fa').value);rFlowsKeep()">+ Adicionar passo</button></div>
+  <div>${draftSteps.map((s,i)=>`<span class="card" style="display:inline-block;margin:2px">${i+1}. ${esc(nm(s))} <a href="#" onclick="draftSteps.splice(${i},1);rFlowsKeep();return false">✕</a></span>`).join(' → ')}</div>
+  <p><button class="b" onclick="saveFlow()">Salvar fluxo</button></p>
+  <h2>Cadastrados</h2>${S.flows.map(f=>`<div class="card row"><div class="grow"><b>${f.id} · ${esc(f.name)}</b><div class="mut">${f.steps.map(nm).map(esc).join(' → ')}</div></div><button class="s" onclick="delFlow(${f.id})">Excluir</button></div>`).join('')||'<div class="mut">Nenhum fluxo.</div>'}`}
+function rFlowsKeep(){const n=$('#fn').value;rFlows();$('#fn').value=n}
+function saveFlow(){const n=$('#fn').value.trim();if(!n||!draftSteps.length)return alert('Informe nome e ao menos um passo.');S.flows.push({id:id(),name:n,steps:[...draftSteps]});draftSteps=[];save();rFlows()}
+function delFlow(i){S.flows=S.flows.filter(f=>f.id!==i);save();rFlows()}
+
+// ---------- Execução ----------
+function rRun(){
+  $('#t-run').innerHTML=!S.flows.length?'<div class="mut">Nenhum fluxo cadastrado.</div>':`<h2>Executar fluxo</h2>
+  <select id="rf">${S.flows.map(f=>`<option value="${f.id}">${f.id} - ${esc(f.name)}</option>`).join('')}</select>
+  <label>Entrada inicial</label><textarea id="ri"></textarea><button class="b" id="rb" onclick="startRun()">Iniciar execução</button><div id="rv"></div>`;
+  if(viewRun)drawRun(viewRun)}
+function drawRun(rid){const r=S.runs.find(x=>x.id===rid),el=$('#rv')||$('#hv');if(!r||!el)return;const nm=i=>S.agents.find(a=>a.id===i)?.name||'?';
+  el.innerHTML=`<h2>Run #${r.id} ${{running:'⏳',done:'✅',error:'❌'}[r.status]} ${r.status}</h2>`+r.steps.map(s=>`<div class="card"><b>Passo ${s.n} · ${esc(nm(s.agent))}</b> <span class="mut">${s.tokens?s.tokens+' tokens':''}</span>
+  <div class="mut">Entrada</div><pre>${esc(s.input)}</pre>${s.error?`<pre class="err">${esc(s.error)}</pre>`:s.output!=null?`<div class="mut">Saída</div><pre>${esc(s.output)}</pre>`:'<div class="mut">Executando...</div>'}</div>`).join('')+
+  (r.status!=='running'?`<div class="card ${r.status==='error'?'err':'ok'}"><pre>${esc(r.final)}</pre></div>`:'')}
+async function startRun(){
+  const f=S.flows.find(x=>x.id===+$('#rf').value),input=$('#ri').value.trim();if(!f||!input)return;
+  const run={id:id(),flow:f.id,input,status:'running',final:'',steps:[],at:new Date().toISOString()};S.runs.unshift(run);viewRun=run.id;save();$('#rb').disabled=true;drawRun(run.id);
+  let cur=input;
+  try{for(const [i,aid] of f.steps.entries()){
+    const a=S.agents.find(x=>x.id===aid);const st={n:i+1,agent:aid,input:cur,output:null,error:null,tokens:0};run.steps.push(st);drawRun(run.id);
+    if(!a){st.error='Agente não encontrado';throw new Error(st.error)}
+    try{const r=await callLLM(a,cur);st.output=cur=r.text;st.tokens=r.tokens;S.usage.push({run:run.id,flow:f.id,agent:a.id,model:a.model,provider:a.provider,tokens:r.tokens,at:new Date().toISOString()})}
+    catch(e){st.error=e.message;throw e}
+    save();drawRun(run.id)}
+    run.status='done';run.final=cur}
+  catch(e){run.status='error';run.final='Falha: '+e.message}
+  save();drawRun(run.id);const b=$('#rb');if(b)b.disabled=false}
+
+// ---------- Histórico ----------
+function rHist(){$('#t-hist').innerHTML=(S.runs.length?S.runs.map(r=>`<div class="card row"><div class="grow">${{running:'⏳',done:'✅',error:'❌'}[r.status]} <b>#${r.id}</b> · ${esc(S.flows.find(f=>f.id===r.flow)?.name||'?')} <span class="mut">${r.at.slice(0,19).replace('T',' ')}</span></div><button class="s" onclick="viewRun=${r.id};rHist()">Ver</button></div>`).join(''):'<div class="mut">Nenhuma execução.</div>')+'<div id="hv"></div>';
+  if(viewRun)drawRun(viewRun)}
+
+// ---------- Relatório ----------
+function rReport(){
+  const U=S.usage;if(!U.length){$('#t-report').innerHTML='<div class="mut">Nenhum dado registrado.</div>';return}
+  const nmA=i=>S.agents.find(a=>a.id===i)?.name||'(removido)',nmF=i=>S.flows.find(f=>f.id===i)?.name||'(removido)';
+  const grp=k=>{const m={};U.forEach(u=>{const key=k(u);m[key]=(m[key]||0)+u.tokens});return Object.entries(m).sort((a,b)=>b[1]-a[1])};
+  const tbl=(t,rows)=>{const mx=Math.max(...rows.map(r=>r[1]),1);return`<h2>${t}</h2><table>${rows.map(([k,v])=>`<tr><td style="width:35%">${esc(k)}</td><td><div class="bar" style="width:${v/mx*100}%"></div></td><td style="text-align:right">${v.toLocaleString()}</td></tr>`).join('')}</table>`};
+  $('#t-report').innerHTML=`<div class="card"><b>Tokens totais:</b> ${U.reduce((s,u)=>s+u.tokens,0).toLocaleString()} · <b>Chamadas:</b> ${U.length}<div class="mut">Custo em USD não é calculado na versão Lite; consulte a tabela de preços do provedor.</div></div>`+
+  tbl('Tokens por agente',grp(u=>nmA(u.agent)))+tbl('Tokens por modelo',grp(u=>u.model))+tbl('Tokens por fluxo',grp(u=>nmF(u.flow)))}
+
+// ---------- Chaves / backup ----------
+function rSettings(){$('#t-settings').innerHTML=`<h2>Chaves de API</h2><div class="mut">Salvas apenas neste navegador.</div>
+  ${Object.entries(PROV).map(([k,v])=>`<label>${v}</label><input type="password" id="k-${k}" value="${esc(S.keys[k])}" autocomplete="off">`).join('')}
+  <button class="b" onclick="saveKeys()">Salvar chaves</button>
+  <h2>Backup</h2><div class="row"><button class="s" onclick="exportData()">Exportar JSON (sem chaves)</button><button class="s" onclick="$('#imp').click()">Importar JSON</button><button class="s" onclick="if(confirm('Apagar tudo?')){localStorage.removeItem('af');location.reload()}">Apagar tudo</button></div>
+  <input type="file" id="imp" accept=".json" style="display:none" onchange="importData(this.files[0])">`}
+function saveKeys(){for(const k in PROV)S.keys[k]=$('#k-'+k).value.trim();save();alert('Chaves salvas.')}
+function exportData(){const d={...S,keys:{openai:'',anthropic:'',gemini:''}};const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(d,null,2)],{type:'application/json'}));a.download='agent-flow-backup.json';a.click()}
+function importData(f){if(!f)return;f.text().then(t=>{const d=JSON.parse(t);S={...S,...d,keys:S.keys};save();location.reload()}).catch(e=>alert('Arquivo inválido: '+e))}
+
+show('agents');
+</script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+services:
+  agent-flow:
+    build: .
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - agent_data:/data
+    ports:
+      - "8501:8501"   # UI
+      - "8000:8000"   # API
+    restart: unless-stopped
+
+volumes:
+  agent_data:
